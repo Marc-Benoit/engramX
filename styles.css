@@ -1,0 +1,16 @@
+body {
+    /* Adjust the path based on your image's location */
+    background-image: url('images/background.jpg');
+
+    /* Set the background image to cover the entire viewport */
+    background-size: cover;
+
+    /* Set the background image to no repeat */
+    background-repeat: no-repeat;
+
+    /* Set the background to be fixed (so it doesn't scroll with the content) */
+    background-attachment: fixed;
+
+    /* Optional: set a background color that will display while the image loads or if the image fails to load */
+    background-color: #000; /* or any other color */
+}
