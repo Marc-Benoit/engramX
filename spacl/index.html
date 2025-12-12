@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Spacl</title>
     <style>
         * {
@@ -15,6 +15,9 @@
             overflow: hidden;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #f5f5f5;
+            touch-action: none;
+            -webkit-user-select: none;
+            user-select: none;
         }
         
         #canvas {
@@ -24,34 +27,49 @@
         
         #toolbar {
             position: fixed;
-            top: 20px;
-            left: 20px;
+            top: 10px;
+            left: 10px;
             background: white;
-            padding: 15px;
+            padding: 10px;
             border-radius: 12px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
             display: flex;
-            gap: 12px;
+            gap: 8px;
             align-items: center;
             z-index: 1000;
+            flex-wrap: wrap;
+            max-width: calc(100vw - 20px);
         }
         
         #toolbar label {
-            font-size: 13px;
+            font-size: 12px;
             color: #666;
             font-weight: 500;
+            display: none;
+        }
+        
+        @media (min-width: 768px) {
+            #toolbar {
+                padding: 15px;
+                gap: 12px;
+                top: 20px;
+                left: 20px;
+            }
+            #toolbar label {
+                display: inline;
+            }
         }
         
         #colorPicker {
-            width: 40px;
-            height: 40px;
+            width: 35px;
+            height: 35px;
             border: none;
             border-radius: 8px;
             cursor: pointer;
         }
         
         #brushSize {
-            width: 100px;
+            width: 80px;
         }
         
         #brushSizeValue {
@@ -62,14 +80,15 @@
         }
         
         .tool-btn {
-            padding: 8px 16px;
+            padding: 8px 12px;
             border: 2px solid #e0e0e0;
             background: white;
             border-radius: 8px;
             cursor: pointer;
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 500;
             transition: all 0.2s;
+            white-space: nowrap;
         }
         
         .tool-btn:hover {
@@ -91,9 +110,16 @@
             padding: 12px 16px;
             border-radius: 8px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            font-size: 12px;
+            font-size: 11px;
             color: #666;
             z-index: 1000;
+            display: none;
+        }
+        
+        @media (min-width: 768px) {
+            #info {
+                display: block;
+            }
         }
         
         #userCount {
@@ -183,6 +209,8 @@
         let userId = Math.random().toString(36).substr(2, 9);
         let users = new Map();
         let strokes = [];
+        let lastTouchDistance = 0;
+        let touchStartTime = 0;
         
         // Background grid
         function drawGrid() {
@@ -216,15 +244,55 @@
         }
         
         // Drawing functions
-        function startDrawing(e) {
+        function getPointerPosition(e) {
             const rect = canvas.getBoundingClientRect();
-            const x = (e.clientX - rect.left - offsetX) / scale;
-            const y = (e.clientY - rect.top - offsetY) / scale;
+            let clientX, clientY;
             
+            if (e.touches && e.touches.length > 0) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+            
+            const x = (clientX - rect.left - offsetX) / scale;
+            const y = (clientY - rect.top - offsetY) / scale;
+            
+            return { x, y, clientX, clientY };
+        }
+        
+        function startDrawing(e) {
+            e.preventDefault();
+            touchStartTime = Date.now();
+            
+            // Handle touch events
+            if (e.touches) {
+                if (e.touches.length === 2) {
+                    // Two finger touch - start panning
+                    isPanning = true;
+                    const touch1 = e.touches[0];
+                    const touch2 = e.touches[1];
+                    lastX = (touch1.clientX + touch2.clientX) / 2;
+                    lastY = (touch1.clientY + touch2.clientY) / 2;
+                    
+                    // Store initial distance for pinch zoom
+                    const dx = touch2.clientX - touch1.clientX;
+                    const dy = touch2.clientY - touch1.clientY;
+                    lastTouchDistance = Math.sqrt(dx * dx + dy * dy);
+                    return;
+                } else if (e.touches.length > 2) {
+                    return;
+                }
+            }
+            
+            const { x, y, clientX, clientY } = getPointerPosition(e);
+            
+            // Middle or right click = pan (desktop only)
             if (e.button === 1 || e.button === 2 || (e.shiftKey && e.button === 0)) {
                 isPanning = true;
-                lastX = e.clientX;
-                lastY = e.clientY;
+                lastX = clientX;
+                lastY = clientY;
                 canvas.style.cursor = 'grabbing';
                 return;
             }
@@ -247,25 +315,69 @@
         }
         
         function draw(e) {
+            e.preventDefault();
+            
+            // Handle touch events
+            if (e.touches) {
+                if (e.touches.length === 2 && isPanning) {
+                    // Two finger pan and pinch zoom
+                    const touch1 = e.touches[0];
+                    const touch2 = e.touches[1];
+                    const centerX = (touch1.clientX + touch2.clientX) / 2;
+                    const centerY = (touch1.clientY + touch2.clientY) / 2;
+                    
+                    // Pan
+                    const dx = centerX - lastX;
+                    const dy = centerY - lastY;
+                    offsetX += dx;
+                    offsetY += dy;
+                    lastX = centerX;
+                    lastY = centerY;
+                    
+                    // Pinch zoom
+                    const dx2 = touch2.clientX - touch1.clientX;
+                    const dy2 = touch2.clientY - touch1.clientY;
+                    const distance = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+                    
+                    if (lastTouchDistance > 0) {
+                        const delta = distance / lastTouchDistance;
+                        const rect = canvas.getBoundingClientRect();
+                        const mouseX = centerX - rect.left;
+                        const mouseY = centerY - rect.top;
+                        const worldX = (mouseX - offsetX) / scale;
+                        const worldY = (mouseY - offsetY) / scale;
+                        const newScale = Math.max(0.1, Math.min(5, scale * delta));
+                        offsetX = mouseX - worldX * newScale;
+                        offsetY = mouseY - worldY * newScale;
+                        scale = newScale;
+                    }
+                    
+                    lastTouchDistance = distance;
+                    redraw();
+                    return;
+                } else if (e.touches.length !== 1) {
+                    return;
+                }
+            }
+            
             if (isPanning) {
-                const dx = e.clientX - lastX;
-                const dy = e.clientY - lastY;
+                const { clientX, clientY } = getPointerPosition(e);
+                const dx = clientX - lastX;
+                const dy = clientY - lastY;
                 offsetX += dx;
                 offsetY += dy;
-                lastX = e.clientX;
-                lastY = e.clientY;
+                lastX = clientX;
+                lastY = clientY;
                 redraw();
                 return;
             }
             
             if (!isDrawing) {
-                broadcastCursor(e);
+                if (!e.touches) broadcastCursor(e);
                 return;
             }
             
-            const rect = canvas.getBoundingClientRect();
-            const x = (e.clientX - rect.left - offsetX) / scale;
-            const y = (e.clientY - rect.top - offsetY) / scale;
+            const { x, y } = getPointerPosition(e);
             
             const currentStroke = strokes[strokes.length - 1];
             currentStroke.points.push({x, y});
@@ -274,9 +386,11 @@
             broadcastStroke(currentStroke);
         }
         
-        function stopDrawing() {
+        function stopDrawing(e) {
+            if (e) e.preventDefault();
             isDrawing = false;
             isPanning = false;
+            lastTouchDistance = 0;
             canvas.style.cursor = 'crosshair';
         }
         
@@ -358,6 +472,13 @@
         canvas.addEventListener('mousemove', draw);
         canvas.addEventListener('mouseup', stopDrawing);
         canvas.addEventListener('mouseleave', stopDrawing);
+        
+        // Touch events
+        canvas.addEventListener('touchstart', startDrawing, { passive: false });
+        canvas.addEventListener('touchmove', draw, { passive: false });
+        canvas.addEventListener('touchend', stopDrawing, { passive: false });
+        canvas.addEventListener('touchcancel', stopDrawing, { passive: false });
+        
         canvas.addEventListener('wheel', handleWheel, { passive: false });
         canvas.addEventListener('contextmenu', (e) => e.preventDefault());
         
