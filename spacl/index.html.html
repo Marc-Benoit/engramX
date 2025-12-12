@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Spacl</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            touch-action: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        
+        #canvas {
+            cursor: crosshair;
+            display: block;
+        }
+        
+        #toolbar {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background: white;
+            padding: 10px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            z-index: 1000;
+            flex-wrap: wrap;
+            max-width: calc(100vw - 20px);
+        }
+        
+        #toolbar label {
+            font-size: 12px;
+            color: #666;
+            font-weight: 500;
+            display: none;
+        }
+        
+        @media (min-width: 768px) {
+            #toolbar {
+                padding: 15px;
+                gap: 12px;
+                top: 20px;
+                left: 20px;
+            }
+            #toolbar label {
+                display: inline;
+            }
+        }
+        
+        #colorPicker {
+            width: 35px;
+            height: 35px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        
+        #brushSize {
+            width: 80px;
+        }
+        
+        #brushSizeValue {
+            font-size: 13px;
+            color: #333;
+            min-width: 30px;
+            font-weight: 600;
+        }
+        
+        .tool-btn {
+            padding: 8px 12px;
+            border: 2px solid #e0e0e0;
+            background: white;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        
+        .tool-btn:hover {
+            background: #f5f5f5;
+            border-color: #333;
+        }
+        
+        .tool-btn.active {
+            background: #333;
+            color: white;
+            border-color: #333;
+        }
+        
+        #info {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: white;
+            padding: 12px 16px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            font-size: 11px;
+            color: #666;
+            z-index: 1000;
+            display: none;
+        }
+        
+        @media (min-width: 768px) {
+            #info {
+                display: block;
+            }
+        }
+        
+        #userCount {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: white;
+            padding: 12px 16px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            font-size: 13px;
+            color: #333;
+            font-weight: 600;
+            z-index: 1000;
+        }
+        
+        .cursor {
+            position: fixed;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 999;
+            transform: translate(-50%, -50%);
+            transition: all 0.1s;
+        }
+        
+        .cursor-label {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    
+    <div id="toolbar">
+        <label>Color:</label>
+        <input type="color" id="colorPicker" value="#000000">
+        
+        <label>Size:</label>
+        <input type="range" id="brushSize" min="1" max="50" value="3">
+        <span id="brushSizeValue">3</span>
+        
+        <button class="tool-btn active" id="drawBtn">Draw</button>
+        <button class="tool-btn" id="eraseBtn">Erase</button>
+        <button class="tool-btn" id="clearBtn" style="margin-left: 8px; color: #d32f2f;">Clear Canvas</button>
+    </div>
+    
+    <div id="userCount">👥 Users: <span id="count">1</span></div>
+    
+    <div id="info">
+        🖱️ Drag to pan • 🖌️ Click to draw • 🔍 Scroll to zoom
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const colorPicker = document.getElementById('colorPicker');
+        const brushSize = document.getElementById('brushSize');
+        const brushSizeValue = document.getElementById('brushSizeValue');
+        const drawBtn = document.getElementById('drawBtn');
+        const eraseBtn = document.getElementById('eraseBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const userCountEl = document.getElementById('count');
+        
+        // Canvas setup
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        
+        // State
+        let isDrawing = false;
+        let isPanning = false;
+        let currentTool = 'draw';
+        let lastX = 0;
+        let lastY = 0;
+        let offsetX = 0;
+        let offsetY = 0;
+        let scale = 1;
+        let userId = Math.random().toString(36).substr(2, 9);
+        let users = new Map();
+        let strokes = [];
+        let lastTouchDistance = 0;
+        let touchStartTime = 0;
+        
+        // Background grid
+        function drawGrid() {
+            ctx.save();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.strokeStyle = '#f0f0f0';
+            ctx.lineWidth = 1;
+            
+            const gridSize = 50 * scale;
+            const startX = (offsetX % gridSize);
+            const startY = (offsetY % gridSize);
+            
+            for (let x = startX; x < canvas.width; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            
+            for (let y = startY; y < canvas.height; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            ctx.restore();
+        }
+        
+        // Drawing functions
+        function getPointerPosition(e) {
+            const rect = canvas.getBoundingClientRect();
+            let clientX, clientY;
+            
+            if (e.touches && e.touches.length > 0) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+            
+            const x = (clientX - rect.left - offsetX) / scale;
+            const y = (clientY - rect.top - offsetY) / scale;
+            
+            return { x, y, clientX, clientY };
+        }
+        
+        function startDrawing(e) {
+            e.preventDefault();
+            touchStartTime = Date.now();
+            
+            // Handle touch events
+            if (e.touches) {
+                if (e.touches.length === 2) {
+                    // Two finger touch - start panning
+                    isPanning = true;
+                    const touch1 = e.touches[0];
+                    const touch2 = e.touches[1];
+                    lastX = (touch1.clientX + touch2.clientX) / 2;
+                    lastY = (touch1.clientY + touch2.clientY) / 2;
+                    
+                    // Store initial distance for pinch zoom
+                    const dx = touch2.clientX - touch1.clientX;
+                    const dy = touch2.clientY - touch1.clientY;
+                    lastTouchDistance = Math.sqrt(dx * dx + dy * dy);
+                    return;
+                } else if (e.touches.length > 2) {
+                    return;
+                }
+            }
+            
+            const { x, y, clientX, clientY } = getPointerPosition(e);
+            
+            // Middle or right click = pan (desktop only)
+            if (e.button === 1 || e.button === 2 || (e.shiftKey && e.button === 0)) {
+                isPanning = true;
+                lastX = clientX;
+                lastY = clientY;
+                canvas.style.cursor = 'grabbing';
+                return;
+            }
+            
+            isDrawing = true;
+            lastX = x;
+            lastY = y;
+            
+            const stroke = {
+                id: Date.now() + Math.random(),
+                userId: userId,
+                points: [{x, y}],
+                color: currentTool === 'erase' ? '#ffffff' : colorPicker.value,
+                size: parseInt(brushSize.value),
+                tool: currentTool
+            };
+            
+            strokes.push(stroke);
+            broadcastStroke(stroke);
+        }
+        
+        function draw(e) {
+            e.preventDefault();
+            
+            // Handle touch events
+            if (e.touches) {
+                if (e.touches.length === 2 && isPanning) {
+                    // Two finger pan and pinch zoom
+                    const touch1 = e.touches[0];
+                    const touch2 = e.touches[1];
+                    const centerX = (touch1.clientX + touch2.clientX) / 2;
+                    const centerY = (touch1.clientY + touch2.clientY) / 2;
+                    
+                    // Pan
+                    const dx = centerX - lastX;
+                    const dy = centerY - lastY;
+                    offsetX += dx;
+                    offsetY += dy;
+                    lastX = centerX;
+                    lastY = centerY;
+                    
+                    // Pinch zoom
+                    const dx2 = touch2.clientX - touch1.clientX;
+                    const dy2 = touch2.clientY - touch1.clientY;
+                    const distance = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+                    
+                    if (lastTouchDistance > 0) {
+                        const delta = distance / lastTouchDistance;
+                        const rect = canvas.getBoundingClientRect();
+                        const mouseX = centerX - rect.left;
+                        const mouseY = centerY - rect.top;
+                        const worldX = (mouseX - offsetX) / scale;
+                        const worldY = (mouseY - offsetY) / scale;
+                        const newScale = Math.max(0.1, Math.min(5, scale * delta));
+                        offsetX = mouseX - worldX * newScale;
+                        offsetY = mouseY - worldY * newScale;
+                        scale = newScale;
+                    }
+                    
+                    lastTouchDistance = distance;
+                    redraw();
+                    return;
+                } else if (e.touches.length !== 1) {
+                    return;
+                }
+            }
+            
+            if (isPanning) {
+                const { clientX, clientY } = getPointerPosition(e);
+                const dx = clientX - lastX;
+                const dy = clientY - lastY;
+                offsetX += dx;
+                offsetY += dy;
+                lastX = clientX;
+                lastY = clientY;
+                redraw();
+                return;
+            }
+            
+            if (!isDrawing) {
+                if (!e.touches) broadcastCursor(e);
+                return;
+            }
+            
+            const { x, y } = getPointerPosition(e);
+            
+            const currentStroke = strokes[strokes.length - 1];
+            currentStroke.points.push({x, y});
+            
+            drawStroke(currentStroke, currentStroke.points.length - 2);
+            broadcastStroke(currentStroke);
+        }
+        
+        function stopDrawing(e) {
+            if (e) e.preventDefault();
+            isDrawing = false;
+            isPanning = false;
+            lastTouchDistance = 0;
+            canvas.style.cursor = 'crosshair';
+        }
+        
+        function drawStroke(stroke, startIdx = 0) {
+            ctx.save();
+            ctx.strokeStyle = stroke.color;
+            ctx.lineWidth = stroke.size * scale;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            
+            ctx.beginPath();
+            for (let i = Math.max(0, startIdx); i < stroke.points.length; i++) {
+                const point = stroke.points[i];
+                const screenX = point.x * scale + offsetX;
+                const screenY = point.y * scale + offsetY;
+                
+                if (i === 0 || i === startIdx) {
+                    ctx.moveTo(screenX, screenY);
+                } else {
+                    ctx.lineTo(screenX, screenY);
+                }
+            }
+            ctx.stroke();
+            ctx.restore();
+        }
+        
+        function redraw() {
+            drawGrid();
+            strokes.forEach(stroke => drawStroke(stroke));
+        }
+        
+        // Zoom
+        function handleWheel(e) {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            const worldX = (mouseX - offsetX) / scale;
+            const worldY = (mouseY - offsetY) / scale;
+            
+            const delta = e.deltaY > 0 ? 0.9 : 1.1;
+            const newScale = Math.max(0.1, Math.min(5, scale * delta));
+            
+            offsetX = mouseX - worldX * newScale;
+            offsetY = mouseY - worldY * newScale;
+            scale = newScale;
+            
+            redraw();
+        }
+        
+        // Tool switching
+        drawBtn.addEventListener('click', () => {
+            currentTool = 'draw';
+            drawBtn.classList.add('active');
+            eraseBtn.classList.remove('active');
+        });
+        
+        eraseBtn.addEventListener('click', () => {
+            currentTool = 'erase';
+            eraseBtn.classList.add('active');
+            drawBtn.classList.remove('active');
+        });
+        
+        clearBtn.addEventListener('click', () => {
+            if (confirm('Clear the entire canvas? This will remove all drawings.')) {
+                strokes = [];
+                localStorage.removeItem('spacl_strokes');
+                redraw();
+            }
+        });
+        
+        brushSize.addEventListener('input', (e) => {
+            brushSizeValue.textContent = e.target.value;
+        });
+        
+        // Event listeners
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mouseup', stopDrawing);
+        canvas.addEventListener('mouseleave', stopDrawing);
+        
+        // Touch events
+        canvas.addEventListener('touchstart', startDrawing, { passive: false });
+        canvas.addEventListener('touchmove', draw, { passive: false });
+        canvas.addEventListener('touchend', stopDrawing, { passive: false });
+        canvas.addEventListener('touchcancel', stopDrawing, { passive: false });
+        
+        canvas.addEventListener('wheel', handleWheel, { passive: false });
+        canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+        
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            redraw();
+        });
+        
+        // Simple local-only multiplayer simulation (in real version, use WebSockets)
+        function broadcastStroke(stroke) {
+            // Store in localStorage for demo purposes
+            const recentStrokes = JSON.parse(localStorage.getItem('spacl_strokes') || '[]');
+            recentStrokes.push({
+                ...stroke,
+                timestamp: Date.now()
+            });
+            // Keep only last 1000 strokes for demo
+            if (recentStrokes.length > 1000) recentStrokes.shift();
+            localStorage.setItem('spacl_strokes', JSON.stringify(recentStrokes));
+        }
+        
+        function broadcastCursor(e) {
+            const rect = canvas.getBoundingClientRect();
+            localStorage.setItem('spacl_cursor_' + userId, JSON.stringify({
+                x: e.clientX - rect.left,
+                y: e.clientY - rect.top,
+                color: colorPicker.value,
+                timestamp: Date.now()
+            }));
+        }
+        
+        // Load existing strokes on start
+        function loadStrokes() {
+            const saved = JSON.parse(localStorage.getItem('spacl_strokes') || '[]');
+            strokes = saved.filter(s => Date.now() - s.timestamp < 3600000); // Keep strokes from last hour
+            redraw();
+        }
+        
+        // Update cursors and user count
+        function updateCursors() {
+            // Remove old cursor elements
+            document.querySelectorAll('.cursor').forEach(el => el.remove());
+            
+            const now = Date.now();
+            let activeUsers = 1;
+            
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key.startsWith('spacl_cursor_') && !key.endsWith(userId)) {
+                    try {
+                        const cursor = JSON.parse(localStorage.getItem(key));
+                        if (now - cursor.timestamp < 5000) { // Active in last 5 seconds
+                            activeUsers++;
+                            const cursorEl = document.createElement('div');
+                            cursorEl.className = 'cursor';
+                            cursorEl.style.left = cursor.x + 'px';
+                            cursorEl.style.top = cursor.y + 'px';
+                            cursorEl.style.background = cursor.color;
+                            document.body.appendChild(cursorEl);
+                        }
+                    } catch (e) {}
+                }
+            }
+            
+            userCountEl.textContent = activeUsers;
+        }
+        
+        // Initialize
+        loadStrokes();
+        setInterval(updateCursors, 100);
+        setInterval(loadStrokes, 1000);
+        
+        // Initial draw
+        redraw();
+    </script>
+</body>
+</html>
